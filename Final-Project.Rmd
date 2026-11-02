@@ -1,0 +1,2446 @@
+
+
+---
+title: "DSCD 602 Programming for Data Scientists II"
+author: "OPOKU ASANTE EMMANUEL - 22426020"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    number_sections: true
+  word_document:
+    toc: true
+    number_sections: true
+---
+
+# Cover Page with Member Names with ID Numbers
+
+OPOKU ASANTE EMMANUEL - 22426020
+
+# Contributions Table
+
+OPOKU ASANTE EMMANUEL did everything
+
+```{r verifying working directory, echo=TRUE}
+getwd()
+```
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(
+  root.dir = "C:/Users/vkpoa/Dropbox/DATA SCIENCE/PROGRAMMING II/FINAL PROJECT"
+)
+
+# Load packages
+library(tidyverse)
+library(janitor)
+library(naniar)
+library(gtsummary)
+library(broom)
+library(report)
+library(tidymodels)
+library(themis)
+library(vip)
+library(sf)
+library(geodata)
+library(leaflet)
+library(factoextra)
+library(flextable)
+library(dplyr)
+library(knitr)
+library(tidyr)
+library(viridis)
+library(ggplot2)
+library(car)
+library(rstatix)
+library(coin)
+library(forcats)
+library(rsample)
+library(ranger)
+
+``` 
+
+# Task 1 Data Import, Joining and Initial Inspections
+
+## 1a. Importing Both Files
+```{r importing data, echo=TRUE}
+# Import farm-level data
+gahs_farm <- read_csv("gahs_farm.csv")
+
+# Import market-level data
+gahs_market <- read_csv("gahs_market.csv")
+
+```
+
+## Displaying Glimpse
+### Farm Data Glimpse
+
+```{r farm data glipmse, echo=TRUE}
+glimpse(gahs_farm)
+
+```
+The gahs_farm dataset contains 2,000 observations and 43 variables, representing farm-household level characteristics and agricultural production outcomes. The dataset contains a mixture of double-precision numeric (<dbl>) and character (<chr>) variables. The numeric variables include farmer and household characteristics such as Farmer_Age and HH_Size, farm characteristics such as Farm_Size_Ha, agricultural production measures such as Yield_Tonnes_Ha and Total_Production_Tonnes, financial measures such as Farm_Revenue_GHS, Input_Cost_GHS, and Farm_Profit_GHS, and other measures including Annual_Rainfall_mm, Fertiliser_Kg_Ha, Extension_Visits_Year, and Distance_to_Market_km. The character variables include demographic, agricultural, financial, and marketing characteristics such as Farmer_Sex, Education_Level, Land_Tenure, Crop_Type, Soil_Quality, Uses_Fertiliser, Uses_Irrigation, Access_to_Credit, and Market_Channel. For the proposed analyses, Farm_Profit_GHS is an important potential continuous outcome for the regression analysis, while Farm_Size_Ha, Yield_Tonnes_Ha, Fertiliser_Kg_Ha, Extension_Visits_Year, and Distance_to_Market_km are potential continuous predictors. Potential categorical predictors include Education_Level, Land_Tenure, Uses_Irrigation, Access_to_Credit, and Market_Channel. The variables Farm_Profitable, Sells_Surplus, and Tech_Adoption are also notable as potential outcome variables for the predictive analysis.
+
+
+### Market Data Glimpse
+
+```{r market data glimpse, echo=TRUE}
+glimpse(gahs_market)
+
+```
+The gahs_market dataset contains 120 observations and 18 variables, representing market-level characteristics across different regions and survey years. The dataset consists of 7 character (<chr>) variables and 11 double-precision numeric (<dbl>) variables. The character variables include market identifiers and descriptive characteristics such as Market_ID, Market_Name, Region, Market_Type, Road_Quality, Cold_Storage_Available, and High_Volume_Market. The numeric variables include geographic coordinates (Latitude_M and Longitude_M), market operating characteristics such as Days_Open_Per_Week and Market_Traders_Count, infrastructure and commodity-price measures, Market_Efficiency_Score, and Survey_Year. For the proposed analyses, Market_Efficiency_Score, Infrastructure_Score, Market_Traders_Count, and the commodity price variables are potentially important market-level predictors or contextual variables. Variables such as Market_Type, Road_Quality, Cold_Storage_Available and High_Volume_Market may also provide useful categorical market characteristics. The Region and Survey_Year variables are particularly important because they are the common fields specified for linking the market-level information to the farm-level dataset.
+
+
+From the initial inspection, Farm_Profit_GHS is the most immediate candidate for a continuous target variable because it provides a direct measure of farm profitability. Farm_Profitable, Sells_Surplus, and Tech_Adoption are also potential targets for classification analyses. Potential predictors include farm characteristics such as Farm_Size_Ha, Yield_Tonnes_Ha, Total_Production_Tonnes, and Fertiliser_Kg_Ha; farmer characteristics such as Farmer_Age, Education_Level, and Years_Farming; and access and management variables such as Access_to_Credit, Uses_Irrigation, Uses_Improved_Seed, Extension_Visits_Year, and Belongs_to_Coop. Market-access variables including Storage_Facility, Market_Channel, and Distance_to_Market_km may also be important. Following integration with the market dataset, variables such as Infrastructure_Score, Market_Traders_Count, Market_Efficiency_Score, Road_Quality, Market_Type, and commodity prices will provide additional market-level predictors. These variables are considered candidate targets and predictors at this stage; their final inclusion will be determined through subsequent exploratory analysis and model diagnostics.
+
+
+
+## 1b. Joining the Two Files
+
+**a. Join type and justification:** The appropriate join is Left join, where gahs_farm is retained as the primary dataset, while matching market-level information from gahs_market is appended where a corresponding Region and Survey_Year are available.
+
+This is appropriate because the main unit of analysis is the farm, with 2,000 farm observations. All farms for subsequent analyses must be retained, even if a corresponding market observation is unavailable. An inner_join() could discard farms without a matching market record, potentially reducing the sample and introducing selection bias. A full_join() would introduce market observations that do not correspond to farms and therefore would not be appropriate for a farm-level analysis.
+
+
+
+
+```{r join, echo=TRUE}
+# Perform the join
+gahs_joined <- gahs_farm %>%
+  left_join(
+    gahs_market,
+    by = c("Region", "Survey_Year")
+    
+  )
+
+# Compare dimensions before and after joining
+dim(gahs_farm)
+dim(gahs_joined)
+
+
+```
+```{r name verification, echo=TRUE}
+names(gahs_joined)
+```
+
+
+```{r dimension, echo=TRUE}
+dim(gahs_joined)
+```
+
+**b.Handling duplicate join keys and column-name conflicts:** The initial join resulted in 4,889 rows rather than the original 2,000 farm observations. This occurred because Region and Survey_Year do not uniquely identify a single market in the market dataset. Some region-year combinations contain multiple markets, resulting in a many-to-many join and duplication of farm observations. Therefore, the market data were aggregated by Region and Survey_Year before performing the final join.
+
+```{r market summary, echo=TRUE}
+gahs_market_summary <- gahs_market %>%
+  group_by(Region, Survey_Year) %>%
+  summarise(
+    Days_Open_Per_Week = mean(Days_Open_Per_Week, na.rm = TRUE),
+    Market_Traders_Count = mean(Market_Traders_Count, na.rm = TRUE),
+    Infrastructure_Score = mean(Infrastructure_Score, na.rm = TRUE),
+    Maize_Price_GHS = mean(Maize_Price_GHS, na.rm = TRUE),
+    Cassava_Price_GHS = mean(Cassava_Price_GHS, na.rm = TRUE),
+    Tomato_Price_GHS = mean(Tomato_Price_GHS, na.rm = TRUE),
+    Cocoa_Price_GHS = mean(Cocoa_Price_GHS, na.rm = TRUE),
+    Market_Efficiency_Score = mean(Market_Efficiency_Score, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+
+```{r number of rows, echo=TRUE}
+nrow(gahs_market_summary)
+```
+The resulting market summary contained 46 unique Region–Survey_Year combinations.
+
+
+```{r}
+gahs_joined <- gahs_farm %>%
+  left_join(
+    gahs_market_summary,
+    by = c("Region", "Survey_Year")
+  )
+```
+
+
+```{r}
+dim(gahs_joined)
+```
+The final left join produced 2,000 rows and 51 columns, confirming that the farm observations were retained without duplication.
+
+Because Region and Survey_Year are the join keys, they appear only once in the resulting dataset. No additional duplicate key columns were therefore created.
+```{r joined data, echo=TRUE}
+gahs_joined %>%
+  slice_head(n = 10)
+```
+**c. Displaying the first 10 rows of the joind dataset**
+
+```{r first 10 rows, echo=TRUE}
+gahs_joined %>%
+  slice_head(n = 10)
+```
+## 1c. Missing Value Audit
+
+### a. Displaying Missing Value Counts and Percentages
+```{r displaying missing values, echo=TRUE}
+missing_audit <- gahs_joined %>%
+  summarise(
+    across(
+      everything(),
+      ~sum(is.na(.))
+    )
+  ) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "Variable",
+    values_to = "Missing_N"
+  ) %>%
+  mutate(
+    Missing_Pct = (Missing_N / nrow(gahs_joined)) * 100
+  ) %>%
+  arrange(desc(Missing_N))
+
+missing_audit
+```
+
+### b. Identification of Variables with highest missingness
+
+```{r identification of highest missingness, echo=TRUE}
+
+missing_table <- missing_audit %>%
+  arrange(desc(Missing_Pct)) %>%
+  slice_head(n = 10) %>%
+  mutate(
+    Strategy = case_when(
+      Variable == "Credit_Amount_GHS" ~ "Retain as NA",
+      Variable %in% c("Tomato_Price_GHS", "Cocoa_Price_GHS") ~ 
+        "Group-level imputation",
+      TRUE ~ "Median imputation"
+    ),
+    
+    Justification = case_when(
+      Variable == "Credit_Amount_GHS" ~ 
+        "Missingness may indicate farmers who did not access credit; imputation could introduce misleading values.",
+      
+      Variable %in% c("Tomato_Price_GHS", "Cocoa_Price_GHS") ~ 
+        "Prices may vary across regions and survey years; group-level imputation preserves this variation.",
+      
+      Variable %in% c("Yield_Tonnes_Ha", 
+                      "Farm_Revenue_GHS", 
+                      "Farm_Profit_GHS",
+                      "Post_Harvest_Loss_Pct",
+                      "Farm_Size_Ha",
+                      "Fertiliser_Kg_Ha",
+                      "Input_Cost_GHS") ~ 
+        "The variable is continuous and potentially skewed; median imputation is robust to extreme values.",
+      
+      TRUE ~ "Median imputation is appropriate for this continuous variable."
+    )
+  ) %>%
+    select(
+    Variable,
+    Missing_N,
+    Missing_Pct,
+    Strategy,
+    Justification
+  )
+
+kable(
+  missing_table,
+  caption = "Missing-value audit and proposed treatment",
+  digits = 2
+)
+
+```
+
+### c. Implementation of chosen strategy
+```{r chosen strategy, echo=TRUE}
+# before missing-value counts
+
+before_missing <- gahs_joined %>%
+  summarise(
+    Credit_Amount_GHS = sum(is.na(Credit_Amount_GHS)),
+    Tomato_Price_GHS = sum(is.na(Tomato_Price_GHS)),
+    Yield_Tonnes_Ha = sum(is.na(Yield_Tonnes_Ha)),
+    Farm_Revenue_GHS = sum(is.na(Farm_Revenue_GHS)),
+    Farm_Profit_GHS = sum(is.na(Farm_Profit_GHS)),
+    Post_Harvest_Loss_Pct = sum(is.na(Post_Harvest_Loss_Pct)),
+    Cocoa_Price_GHS = sum(is.na(Cocoa_Price_GHS)),
+    Farm_Size_Ha = sum(is.na(Farm_Size_Ha)),
+    Fertiliser_Kg_Ha = sum(is.na(Fertiliser_Kg_Ha)),
+    Input_Cost_GHS = sum(is.na(Input_Cost_GHS))
+  )
+
+before_missing
+```
+
+
+```{r}
+
+# Implementing the Chosen Strategies
+gahs_clean <- gahs_joined %>%
+  group_by(Region, Survey_Year) %>%
+  mutate(
+    Tomato_Price_GHS = if_else(
+      is.na(Tomato_Price_GHS),
+      median(Tomato_Price_GHS, na.rm = TRUE),
+      Tomato_Price_GHS
+    ),
+    
+    Cocoa_Price_GHS = if_else(
+      is.na(Cocoa_Price_GHS),
+      median(Cocoa_Price_GHS, na.rm = TRUE),
+      Cocoa_Price_GHS
+    )
+  ) %>%
+  ungroup() %>%
+  mutate(
+    Tomato_Price_GHS = replace_na(
+      Tomato_Price_GHS,
+      median(Tomato_Price_GHS, na.rm = TRUE)
+    ),
+    
+    Cocoa_Price_GHS = replace_na(
+      Cocoa_Price_GHS,
+      median(Cocoa_Price_GHS, na.rm = TRUE)
+    ),
+    
+    Yield_Tonnes_Ha = replace_na(
+      Yield_Tonnes_Ha,
+      median(Yield_Tonnes_Ha, na.rm = TRUE)
+    ),
+    
+    Farm_Revenue_GHS = replace_na(
+      Farm_Revenue_GHS,
+      median(Farm_Revenue_GHS, na.rm = TRUE)
+    ),
+    
+    Farm_Profit_GHS = replace_na(
+      Farm_Profit_GHS,
+      median(Farm_Profit_GHS, na.rm = TRUE)
+    ),
+    
+    Post_Harvest_Loss_Pct = replace_na(
+      Post_Harvest_Loss_Pct,
+      median(Post_Harvest_Loss_Pct, na.rm = TRUE)
+    ),
+    
+    Farm_Size_Ha = replace_na(
+      Farm_Size_Ha,
+      median(Farm_Size_Ha, na.rm = TRUE)
+    ),
+    
+    Fertiliser_Kg_Ha = replace_na(
+      Fertiliser_Kg_Ha,
+      median(Fertiliser_Kg_Ha, na.rm = TRUE)
+    ),
+    
+    Input_Cost_GHS = replace_na(
+      Input_Cost_GHS,
+      median(Input_Cost_GHS, na.rm = TRUE)
+    )
+  )
+```
+
+
+
+```{r post-missing counts, echo=TRUE}
+# Calculating the after-missing counts
+
+after_missing <- gahs_clean %>%
+  summarise(
+    Credit_Amount_GHS = sum(is.na(Credit_Amount_GHS)),
+    Tomato_Price_GHS = sum(is.na(Tomato_Price_GHS)),
+    Yield_Tonnes_Ha = sum(is.na(Yield_Tonnes_Ha)),
+    Farm_Revenue_GHS = sum(is.na(Farm_Revenue_GHS)),
+    Farm_Profit_GHS = sum(is.na(Farm_Profit_GHS)),
+    Post_Harvest_Loss_Pct = sum(is.na(Post_Harvest_Loss_Pct)),
+    Cocoa_Price_GHS = sum(is.na(Cocoa_Price_GHS)),
+    Farm_Size_Ha = sum(is.na(Farm_Size_Ha)),
+    Fertiliser_Kg_Ha = sum(is.na(Fertiliser_Kg_Ha)),
+    Input_Cost_GHS = sum(is.na(Input_Cost_GHS))
+  )
+
+
+after_missing
+```
+
+
+```{r comparison, echo=TRUE}
+# Before and After Table
+
+before_after <- tibble(
+  Variable = names(before_missing),
+  Before = as.numeric(before_missing[1, ]),
+  After = as.numeric(after_missing[1, ])
+) %>%
+  mutate(
+    Reduction = Before - After
+  )
+
+before_after
+
+
+```
+
+
+```{r}
+
+kable(
+  before_after,
+  caption = "Missing values before and after treatment"
+)
+```
+
+The selected missing-value treatment strategies were implemented using mutate() and replace_na(). Median imputation was applied to continuous farm-level variables, while group-level median imputation by region and survey year was applied to selected commodity price variables to account for potential geographical and temporal differences in prices. Credit_Amount_GHS was retained as NA because its high missingness may reflect the absence of credit access rather than randomly missing observations. The before-and-after audit shows that the implemented imputation strategies reduced the missing values in the selected variables to zero, while the missing values for Credit_Amount_GHS were deliberately retained.
+
+
+
+
+# Task 2: Data Wrangling
+
+## 2a. Variable Selection and Justification
+
+**Primary outcome variable:** The primary outcome variable selected for this analysis is Farm_Profitable, a categorical variable indicating whether a farm is profitable (Yes/No). It is selected as the primary outcome because profitability provides a clear measure of farm-level economic performance and allows the analysis to investigate the characteristics associated with successful farm operations.
+
+**Secondary outcome variable:** The secondary outcome variable is Farm_Profit_GHS, a continuous variable measuring the monetary profit generated by each farm in Ghanaian Cedis (GHS). This variable complements the primary outcome by providing a quantitative measure of the magnitude of farm profitability, rather than simply indicating whether a farm is profitable or not.
+
+**Predictor variables:** The following predictor variables will be used across the descriptive, visualisation, and modelling analyses:
+
+**Continuous predictors:** 
+Farmer_Age — age of the farmer in years.
+HH_Size — number of members in the farmer's household.
+Years_Farming — years of farming experience.
+Farm_Size_Ha — farm size in hectares.
+Annual_Rainfall_mm — annual rainfall received in millimetres.
+Extension_Visits_Year — number of agricultural extension visits received per year.
+Distance_to_Market_km — distance from the farm to the market in kilometres.
+
+**Categorical predictors:**
+Farmer_Sex — sex of the farmer.
+Education_Level — highest educational level attained.
+Land_Tenure — type of land tenure.
+Crop_Type — principal crop cultivated.
+Soil_Quality — assessed quality of the farm soil.
+Experienced_Drought — whether the farmer experienced drought.
+Uses_Fertiliser — whether the farmer uses fertiliser.
+Uses_Irrigation — whether the farmer uses irrigation.
+Uses_Improved_Seed — whether improved seeds are used.
+Belongs_to_Coop — whether the farmer belongs to a cooperative.
+Access_to_Credit — whether the farmer has access to credit.
+Storage_Facility — type of storage facility available.
+Market_Channel — primary channel through which farm produce is sold.
+Tech_Adoption — level of technology adoption.
+
+**Analytical question:** What farm, farmer, production and market characteristics are associated with farm profitability, and how do these characteristics differ between profitable and non-profitable farms?
+
+
+## 2b.Reshaping with pivot_longer() 
+
+Given the dataset, pivot_longer() reshaping is appropriate on the four crop-price variables in the market dataset:
+Maize_Price_GHS
+Cassava_Price_GHS
+Tomato_Price_GHS
+Cocoa_Price_GHS
+
+The market dataset contains separate price variables for maize, cassava, tomato, and cocoa. These variables measure the same underlying concept, namely crop price, but are stored in separate columns. The pivot_longer() function was therefore used to convert these variables from wide to long format, creating a single Crop variable and a corresponding Price_GHS variable. This structure is more suitable for downstream visualisations and summary tables comparing crop prices across markets, because the four crop prices can be analysed using a common categorical variable rather than separate columns.
+
+
+```{r}
+# Reshaping with pivot_longer()
+market_prices_long <- gahs_market %>%
+  pivot_longer(
+    cols = c(
+      Maize_Price_GHS,
+      Cassava_Price_GHS,
+      Tomato_Price_GHS,
+      Cocoa_Price_GHS
+    ),
+    names_to = "Crop",
+    values_to = "Price_GHS"
+  )
+```
+
+
+
+
+
+```{r}
+market_prices_long %>%
+  slice_head(n = 10)
+```
+
+
+```{r}
+market_prices_long <- gahs_market %>%
+  pivot_longer(
+    cols = c(
+      Maize_Price_GHS,
+      Cassava_Price_GHS,
+      Tomato_Price_GHS,
+      Cocoa_Price_GHS
+    ),
+    names_to = "Crop",
+    values_to = "Price_GHS"
+  ) %>%
+  mutate(
+    Crop = gsub("_Price_GHS", "", Crop)
+  )
+```
+
+
+```{r}
+market_prices_long %>%
+  slice_head(n = 10)
+```
+
+## 2c. String Manipulation
+
+### String Manipulation 1: Extracting the numeric component of Farm_ID
+
+**Reason:** The Farm_ID variable contains structured identifiers such as GAHS-F0001. The str_extract() function was used to extract the numeric component of each identifier into a new Farm_Number variable. This provides a simplified identifier that can be used for record ordering and identification while retaining the original Farm_ID.
+```{r}
+# Before
+gahs_farm %>%
+  select(Farm_ID) %>%
+  slice_head(n = 10)
+```
+
+```{r}
+# Applying str_extract()
+
+gahs_farm <- gahs_farm %>%
+  mutate(
+    Farm_Number = str_extract(Farm_ID, "\\d+")
+  )
+```
+
+
+
+```{r}
+# After
+gahs_farm %>%
+  select(Farm_ID, Farm_Number) %>%
+  slice_head(n = 10)
+```
+
+### String Manipulation 2: Identifying whether a farmer obtained credit from a formal source
+
+**Reason:** The Credit_Source variable contains text categories indicating the source of agricultural credit, including Bank, MFI, SACCO, Family and None. The str_detect() function is used to identify credit obtained from Bank, MFI, or SACCO and create a binary Formal_Credit_Source variable. This transformation simplifies the original text categories into a form that can be used to compare farm characteristics and profitability according to access to formal credit sources.
+```{r}
+# Before
+gahs_farm %>%
+  select(Credit_Source) %>%
+  distinct()
+
+```
+
+
+```{r}
+# Applying str_detect()
+
+gahs_farm <- gahs_farm %>%
+  mutate(
+    Formal_Credit_Source = if_else(
+      str_detect(Credit_Source, regex("Bank|MFI|SACCO", ignore_case = TRUE)),
+      "Yes",
+      "No"
+    )
+  )
+
+```
+
+
+```{r}
+# After
+
+gahs_farm %>%
+  select(Credit_Source, Formal_Credit_Source) %>%
+  slice_head(n = 10)
+
+```
+
+
+
+
+## 2d. Filtering, Selecting and Mutating
+
+### a. Filtering
+
+
+```{r}
+# 2d. Filtering, Selecting, and Mutating
+
+# --------------------------------------------------
+# (a) FILTER
+# --------------------------------------------------
+
+# Exclude observations with missing values in variables
+# required for the core production and profitability analyses.
+
+dat_filtered <- gahs_joined %>%
+  filter(
+    !is.na(Farm_Profitable),
+    !is.na(Yield_Tonnes_Ha),
+    !is.na(Farm_Size_Ha)
+  )
+
+# Number of rows removed
+rows_removed <- nrow(gahs_joined) - nrow(dat_filtered)
+
+rows_removed
+
+
+# --------------------------------------------------
+# (b) SELECT
+# --------------------------------------------------
+
+# Retain variables required for demographic, agricultural,
+# financial, market, and profitability analyses.
+
+dat_selected <- dat_filtered %>%
+  select(
+    Farm_ID,
+    Region,
+    Farmer_Sex,
+    Farmer_Age,
+    Education_Level,
+    HH_Size,
+    Years_Farming,
+    Farm_Size_Ha,
+    Crop_Type,
+    Soil_Quality,
+    Annual_Rainfall_mm,
+    Experienced_Drought,
+    Uses_Fertiliser,
+    Uses_Irrigation,
+    Uses_Improved_Seed,
+    Extension_Visits_Year,
+    Belongs_to_Coop,
+    Yield_Tonnes_Ha,
+    Farm_Revenue_GHS,
+    Input_Cost_GHS,
+    Farm_Profit_GHS,
+    Profit_Margin_Pct,
+    Access_to_Credit,
+    Post_Harvest_Loss_Pct,
+    Distance_to_Market_km,
+    Food_Insecurity_Score,
+    Farm_Profitable,
+    Sells_Surplus,
+    Tech_Adoption,
+    Market_Efficiency_Score
+  )
+
+
+# --------------------------------------------------
+# (c) MUTATE
+# --------------------------------------------------
+
+dat_clean <- dat_selected %>%
+  mutate(
+
+    # New continuous variable:
+    # profit standardized by farm size
+    Profit_Per_Ha = Farm_Profit_GHS / Farm_Size_Ha,
+
+    # New categorical variable:
+    # classify farms according to farm size
+    Farm_Size_Category = cut(
+      Farm_Size_Ha,
+      breaks = c(-Inf, 2, 5, Inf),
+      labels = c("Small", "Medium", "Large"),
+      right = TRUE
+    ),
+
+    # Ordered categorical variables
+    Tech_Adoption = factor(
+      Tech_Adoption,
+      levels = c("Low", "Medium", "High"),
+      ordered = TRUE
+    ),
+
+    Education_Level = factor(
+      Education_Level,
+      levels = c("None", "Primary", "JHS", "SHS"),
+      ordered = TRUE
+    )
+  )
+
+```
+
+**Justification:** Observations with missing values in Farm_Profitable, Yield_Tonnes_Ha, or Farm_Size_Ha were excluded because these variables are required for the primary profitability analysis and for calculating the derived Profit_Per_Ha measure. Removing these incomplete records ensures that the core analyses are based on observations with the necessary outcome and denominator information. A total of 177 observations were removed, leaving 1,823 observations for subsequent analysis.
+
+
+
+## 2e. Final Wrangled Dataset
+
+### 1. Creating dat_clean
+
+```{r}
+
+dim(dat_clean)
+
+glimpse(dat_clean)
+
+```
+
+### 2. Showing first 10 rows
+
+```{r}
+
+dat_clean %>%
+  slice_head(n = 10) %>%
+  flextable() %>%
+  set_caption("First 10 Rows of the Final Wrangled Dataset") %>%
+  autofit()
+```
+
+### 3. Summary
+
+The data-wrangling pipeline transformed the joined farm and market dataset into an analysis-ready dataset for the subsequent visualisation, descriptive, and modelling tasks. Observations with missing values in key analytical variables were excluded, resulting in 1,823 observations from the original 2,000 records. Relevant demographic, agricultural, financial, and market variables were retained, while unnecessary variables were removed. A continuous Profit_Per_Ha variable was created to standardise farm profit by farm size, and Farm_Size_Category was created to classify farms into small, medium, and large categories. Ordered factor levels were also established for variables such as education and technology adoption. The resulting dat_clean dataset contains 1,823 observations and 32 variables and is therefore structured for the downstream analyses.
+
+
+
+
+
+
+# Task 3: Exploratory Data Analysis and Visualisation
+
+## Plot 1: Distribution of Primary Outcome Variable
+
+**Chosen Variable:** Farm_Profitable 
+**Justification:** This plot was produced to examine the distribution of the primary outcome variable, Farm_Profitable. Since the outcome is categorical, a bar chart is appropriate for comparing the frequency and proportion of profitable and non-profitable farms. Percentage labels are included to make the relative distribution of the two outcome categories clear.
+
+
+```{r plot1-distribution, echo=TRUE, fig.cap="Figure 1: Distribution of Farm Profitability"}
+
+# Plot 1: Distribution of Primary Outcome Variable
+
+plot1_data <- dat_clean %>%
+  filter(!is.na(Farm_Profitable)) %>%
+  count(Farm_Profitable) %>%
+  mutate(
+    Percentage = n / sum(n),
+    Farm_Profitable = reorder(Farm_Profitable, -n)
+  )
+
+ggplot(plot1_data, aes(x = Farm_Profitable, y = n)) +
+  geom_col(width = 0.65) +
+  geom_text(
+    aes(label = scales::percent(Percentage, accuracy = 0.1)),
+    vjust = -0.5,
+    size = 4
+  ) +
+  labs(
+    title = "Distribution of Farm Profitability",
+    x = "Farm Profitable",
+    y = "Number of Farms"
+  ) +
+  theme_minimal()
+
+```
+
+**Interpretation:** The distribution shows that the vast majority of farms are classified as profitable. Approximately 99.2% of the farms are profitable, while as low as only about 0.8% are classified as non-profitable. This indicates a highly imbalanced primary outcome, with the profitable category dominating the dataset. 
+
+
+
+## Plot 2: Outcome by a Key Categorical Predictor
+
+**Chosen Variable:** Tech_Adoption
+
+**Justification:** Technology adoption is selected as a key categorical predictor because the adoption of agricultural technologies may influence farm productivity and profitability. A grouped outcome comparison allows the distribution of profitable and non-profitable farms to be examined across different technology-adoption levels. The ordered levels of technology adoption also provide a meaningful progression from low to high adoption.
+
+```{r plot2-outcome-categorical, echo=TRUE, fig.cap="Figure 2: Farm Profitability by Technology Adoption Level"}
+# Plot 2: Primary Outcome by Key Categorical Predictor
+
+plot2_data <- dat_clean %>%
+  filter(
+    !is.na(Farm_Profitable),
+    !is.na(Tech_Adoption)
+  ) %>%
+  count(Tech_Adoption, Farm_Profitable)
+
+ggplot(
+  plot2_data,
+  aes(
+    x = Tech_Adoption,
+    y = n,
+    fill = Farm_Profitable
+  )
+) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Farm Profitability by Technology Adoption Level",
+    x = "Technology Adoption",
+    y = "Number of Farms",
+    fill = "Farm Profitable"
+  ) +
+  theme_minimal()
+```
+
+**Interpretation** Figure 2 clearly shows that profitable farms constitute nearly 100% of farms across all technology-adoption levels. The high- and medium-adoption groups exhibit almost identical profitability distributions, while the low-adoption group has a slightly higher proportion of unprofitable farms. Overall, the descriptive pattern suggests little variation in farm profitability by technology-adoption level. However, statistical testing is required to determine whether the observed differences represent a significant association between technology adoption and farm profitability.
+
+
+
+## Plot 3: Two Continuous Predictors
+**Chosen Variables:** Farm_Size_Ha and Yield_Tonnes_Ha
+
+
+**Justification:** This scatterplot examines the relationship between two important continuous agricultural variables: farm size and yield. The points are coloured according to the primary outcome to assess whether profitable and non-profitable farms occupy different regions of the relationship. Separate fitted lines allow the direction and approximate linearity of the relationship to be compared between profitability groups.
+
+
+
+```{r plot3-continuous-predictors, echo=TRUE, fig.cap="Figure 3: Relationship Between Farm Size and Yield by Farm Profitability"}
+# Plot 3: Two Continuous Predictors
+
+plot3_data <- dat_clean %>%
+  filter(
+    !is.na(Farm_Size_Ha),
+    !is.na(Yield_Tonnes_Ha),
+    !is.na(Farm_Profitable)
+  )
+
+ggplot(
+  plot3_data,
+  aes(
+    x = Farm_Size_Ha,
+    y = Yield_Tonnes_Ha,
+    colour = Farm_Profitable
+  )
+) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(
+    aes(group = Farm_Profitable),
+    method = "lm",
+    se = TRUE
+  ) +
+  labs(
+    title = "Relationship Between Farm Size and Yield",
+    x = "Farm Size (ha)",
+    y = "Yield (tonnes/ha)",
+    colour = "Farm Profitable"
+  ) +
+  theme_minimal()
+
+```
+
+**Interpretation**  Figure 3 illustrates the relationship between farm size and yield. Among profitable farms, there is a positive association between farm size and yield, as indicated by the upward-sloping fitted regression line. However, the substantial dispersion of observations around the line suggests that farm size alone does not strongly explain variation in yield. Unprofitable farms are concentrated among smaller farms and exhibit substantially lower yields. Overall, the figure suggests that larger farm size may be associated with higher yield, although other agricultural, environmental, and management factors are likely to contribute to yield differences. Because this is a descriptive plot, the observed relationship should not be interpreted as causal.
+
+
+## Plot 4: Multivariate or Modern Chart
+### b. Heatmap
+**Justification:** A heatmap was selected to examine differences in mean profit per hectare across crop types and farm-size categories. This combination is analytically relevant because profitability may vary not only by the type of crop cultivated but also by the scale of the farm. The heatmap provides an efficient visual comparison of these groups and can reveal combinations of crop type and farm size associated with relatively higher or lower profitability.
+
+
+```{r plot4-heatmap, echo=TRUE, fig.cap="Figure 4: Mean farm profit per hectare by crop type and farm size category."}
+
+heatmap_data <- dat_clean %>%
+  group_by(Crop_Type, Farm_Size_Category) %>%
+  summarise(
+    Mean_Profit_Per_Ha = mean(Profit_Per_Ha, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(
+  heatmap_data,
+  aes(
+    x = Farm_Size_Category,
+    y = Crop_Type,
+    fill = Mean_Profit_Per_Ha
+  )
+) +
+  geom_tile(color = "white") +
+  geom_text(
+    aes(label = round(Mean_Profit_Per_Ha, 0)),
+    size = 3
+  ) +
+  scale_fill_viridis_c(
+    option = "C",
+    name = "Mean Profit\nper Hectare (GHS)"
+  ) +
+  labs(
+    title = "Mean Farm Profit per Hectare by Crop and Farm Size",
+    subtitle = "Comparison across crop types and farm-size categories",
+    x = "Farm Size Category",
+    y = "Crop Type"
+  ) +
+  theme_minimal()
+```
+
+**Interpretation:** Figure 4 compares mean farm profit per hectare across crop types and farm-size categories. Considerable variation is observed across the crop–farm-size combinations. Cowpea records the highest mean profit per hectare overall, reaching GHS 6,776 among large farms, while Sorghum records the highest value among small farms at GHS 5,537 per hectare. Several crops, including Cowpea, Maize, Tomato, and Cassava, show higher mean profitability among large farms, whereas Sorghum and Yam exhibit lower profitability as farm size increases. Overall, the results indicate that the relationship between farm size and profitability per hectare varies by crop type, suggesting that crop choice may be an important factor in farm-level profitability. These descriptive differences do not, however, establish a statistically significant effect or causal relationship.
+
+
+
+## Plot 5: Geospatial Choropleth Map
+
+**Chosen Variable:** Farm_Profitable
+
+**Justification:** A geospatial analysis is conducted to examine whether farm profitability varies across regions of Ghana. The regional proportion of profitable farms was selected as the summary statistic because Farm_Profitable is the primary outcome variable for this study. Aggregating the outcome by region allows geographical differences in farm profitability to be visualised clearly using a choropleth map, while the individual farm coordinates provide additional spatial detail through an interactive map.
+
+
+```{r regional-summary, echo=TRUE}
+
+# Computing the regional summary
+
+regional_profitability <- dat_clean %>%
+  group_by(Region) %>%
+  summarise(
+    Profitability_Rate = mean(Farm_Profitable == "Yes", na.rm = TRUE),
+    Number_of_Farms = n(),
+    .groups = "drop"
+  )
+
+regional_profitability
+
+```
+
+
+
+```{r}
+dir.create("data/geodata", recursive = TRUE, showWarnings = FALSE)
+
+```
+
+
+```{r}
+
+
+
+geodata_path("data/geodata")
+
+ghana_regions <- geodata::gadm(
+  country = "GHA",
+  level = 1,
+  path = "data/geodata"
+)
+
+```
+
+
+```{r convert-to-sf, echo=TRUE}
+
+ghana_regions_sf <- st_as_sf(ghana_regions)
+
+class(ghana_regions_sf)
+
+
+```
+
+
+
+```{r region-check, echo=TRUE}
+
+unique(dat_clean$Region)
+
+unique(ghana_regions$NAME_1)
+
+
+```
+
+
+```{r region-match-check, echo=TRUE}
+
+# GAHS regions without a corresponding GADM region
+setdiff(
+  unique(dat_clean$Region),
+  unique(ghana_regions_sf$NAME_1)
+)
+
+# GADM regions without a corresponding GAHS region
+setdiff(
+  unique(ghana_regions_sf$NAME_1),
+  unique(dat_clean$Region)
+)
+```
+
+
+```{r spatial-join, echo=TRUE}
+
+ghana_profitability <- ghana_regions_sf %>%
+  left_join(
+    regional_profitability,
+    by = c("NAME_1" = "Region")
+  )
+
+ghana_profitability
+
+```
+
+
+```{r spatial-join-check, echo=TRUE}
+
+ghana_profitability %>%
+  st_drop_geometry() %>%
+  select(
+    NAME_1,
+    Profitability_Rate,
+    Number_of_Farms
+  )
+
+
+```
+
+
+```{r unmatched-regions, echo=TRUE}
+
+ghana_profitability %>%
+  st_drop_geometry() %>%
+  filter(is.na(Profitability_Rate)) %>%
+  select(NAME_1)
+
+```
+
+
+```{r choropleth, echo=TRUE, fig.cap="Figure 5: Farm Profitability Rate by Region"}
+
+ggplot(ghana_profitability) +
+  geom_sf(
+    aes(fill = Profitability_Rate),
+    colour = "white",
+    linewidth = 0.3
+  ) +
+  geom_sf_text(
+    aes(label = NAME_1),
+    size = 3
+  ) +
+  scale_fill_viridis_c(
+    labels = scales::percent,
+    name = "Farm Profitability"
+  ) +
+  labs(
+    title = "Farm Profitability Rate by Region",
+    subtitle = "Percentage of farms classified as profitable"
+  ) +
+  theme_void()
+
+
+```
+
+
+**Interpretation:** Figure 5 presents the geographical distribution of farm profitability across Ghana. The map shows that the proportion of farms classified as profitable is very high across all regions, with regional rates ranging approximately from 98% to 100%. Some regions, including Bono East, Oti, Greater Accra, Volta, Ahafo, and Western North, exhibit profitability rates close to 100%, whereas Savannah appears comparatively lower. Despite these differences, the relatively narrow range suggests limited regional variation in farm profitability. Therefore, while the map provides useful geographic insight into the distribution of profitable farms, the observed differences should not be interpreted as evidence of statistically significant regional effects without further inferential analysis.
+
+
+
+```{r}
+market_map_data <- gahs_market %>%
+  filter(
+    !is.na(Latitude_M),
+    !is.na(Longitude_M)
+  )
+```
+
+
+
+```{r}
+
+nrow(market_map_data)
+```
+
+
+
+```{r}
+market_map_data %>%
+  summarise(
+    Missing_Latitude = sum(is.na(Latitude_M)),
+    Missing_Longitude = sum(is.na(Longitude_M))
+  )
+
+```
+
+
+```{r interactive Leaflet map, echo=TRUE, fig.cap="Figure 6: Interactive Leaflet Map"}
+efficiency_pal <- colorNumeric(
+  palette = "viridis",
+  domain = market_map_data$Market_Efficiency_Score
+)
+
+leaflet(market_map_data) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    lng = ~Longitude_M,
+    lat = ~Latitude_M,
+    radius = 6,
+    stroke = TRUE,
+    fillOpacity = 0.8,
+    color = ~efficiency_pal(Market_Efficiency_Score),
+    popup = ~paste0(
+      "<strong>Market:</strong> ", Market_Name,
+      "<br><strong>Region:</strong> ", Region,
+      "<br><strong>Market Type:</strong> ", Market_Type,
+      "<br><strong>Infrastructure Score:</strong> ", Infrastructure_Score,
+      "<br><strong>Market Efficiency Score:</strong> ", Market_Efficiency_Score
+    )
+  ) %>%
+  addLegend(
+    "bottomright",
+    pal = efficiency_pal,
+    values = ~Market_Efficiency_Score,
+    title = "Market Efficiency",
+    opacity = 1
+  )
+
+```
+
+
+
+# Task 4: Descriptive Statistics and Inferential Tests
+
+## 4a. Descriptive Summary Table
+
+**Variable selection:** 
+Farm_Profitable — primary outcome/grouping variable
+Farmer_Sex — categorical
+Education_Level — categorical
+Farmer_Age — continuous
+Farm_Size_Ha — continuous
+
+**Justification:** The variables included were selected to provide a balanced description of the demographic, human-capital and farm-level characteristics of farmers according to profitability status. Farm_Profitable was selected as the primary grouping variable because it directly distinguishes profitable from unprofitable farms. Farmer_Sex was included as a demographic characteristic to assess differences in the composition of farmers across profitability groups. Education_Level was selected as an indicator of human capital, as differences in educational attainment may be relevant to farmers' ability to adopt knowledge and make production and management decisions. Farmer_Age was included as a continuous demographic measure to compare the age distribution and variability of farmers across profitability groups. Finally, Farm_Size_Ha was selected as a key farm-level characteristic because the scale of agricultural operations may be associated with production capacity and farm profitability. Together, these variables provide a concise descriptive profile of the farmers while satisfying the requirement for both categorical and continuous variables.
+
+```{r Variable Check, echo=TRUE}
+
+dat_clean %>%
+  select(
+    Farm_Profitable,
+    Farmer_Sex,
+    Education_Level,
+    Farmer_Age,
+    Farm_Size_Ha
+  ) %>%
+  summary()
+
+```
+
+```{r}
+table(dat_clean$Farm_Profitable, useNA = "ifany")
+
+```
+
+```{r Summary Table 1, echo=TRUE, tab.cap="Table 1: Descriptive Summary Table"}
+
+table1 <- dat_clean %>%
+  select(
+    Farm_Profitable,
+    Farmer_Sex,
+    Education_Level,
+    Farmer_Age,
+    Farm_Size_Ha
+  ) %>%
+  tbl_summary(
+    by = Farm_Profitable,
+
+    type = list(
+      Farmer_Age ~ "continuous2",
+      Farm_Size_Ha ~ "continuous2"
+    ),
+
+    statistic = list(
+      Farmer_Age ~ c(
+        "{mean} ± {sd}",
+        "{median} ({p25}, {p75})"
+      ),
+      Farm_Size_Ha ~ c(
+        "{mean} ± {sd}",
+        "{median} ({p25}, {p75})"
+      )
+    ),
+
+    label = list(
+      Farmer_Sex ~ "Farmer Sex",
+      Education_Level ~ "Education Level",
+      Farmer_Age ~ "Farmer Age (years)",
+      Farm_Size_Ha ~ "Farm Size (ha)"
+    ),
+
+    missing = "ifany",
+    missing_text = "Missing",
+    missing_stat = "{N_miss}"
+  ) %>%
+
+  add_overall() %>%
+
+  bold_labels() %>%
+
+  modify_footnote(
+    all_stat_cols() ~
+      "Categorical variables are presented as n (%). Continuous variables are presented as mean ± SD and median (Q1, Q3). Missing values are reported where applicable."
+  )
+
+table1
+
+```
+
+
+**Interpretation:** Table 1 summarises selected demographic and farm characteristics according to farm profitability status. The sample comprised 1,823 farmers, of whom 1,808 (approximately 99%) were classified as profitable and only 15 (approximately 1%) as unprofitable. Males represented the majority of farmers overall (60%), while females accounted for 40%, with broadly similar sex distributions across profitability groups. JHS was the most common education level overall (31%); however, JHS farmers constituted a relatively larger proportion of the small unprofitable group (58%). The mean age of farmers was 46 ± 12 years overall and was similar between unprofitable (44 ± 11 years) and profitable farmers (46 ± 12 years). Profitable farmers had a larger mean farm size (3.27 ± 3.37 ha) than unprofitable farmers (1.98 ± 1.23 ha), with a similar pattern observed for the median farm size. Overall, the descriptive statistics suggest relatively little difference in farmer age and sex between profitability groups, while farm size appears descriptively higher among profitable farmers. However, the very small number of unprofitable farmers (n = 15) means that percentages for this group should be interpreted cautiously and inferential testing is required to determine whether observed differences are statistically meaningful.
+
+
+
+
+## 4b. Inferential Tests
+## Comparison of a continuous variable across two groups
+
+**Research Question:** Does farm size differ significantly between profitable and unprofitable farms?
+**Variables Chosen:**
+Continuous variable: Farm_Size_Ha
+Grouping variable: Farm_Profitable (Yes/No)
+
+**Hypotheses:**
+
+**H₀:** The distribution of farm size is the same for profitable and unprofitable farms.
+
+**H₁:** The distribution of farm size differs between profitable and unprofitable farms.
+
+## Normality Test
+
+### Shapiro-Wilk test
+
+```{r shapiro test}
+dat_clean %>%
+  group_by(Farm_Profitable) %>%
+  summarise(
+    n = n(),
+    Shapiro_W = unname(shapiro.test(Farm_Size_Ha)$statistic),
+    Shapiro_p = shapiro.test(Farm_Size_Ha)$p.value,
+    .groups = "drop"
+  )
+
+```
+
+The profitable group significantly departs from normality, while the unprofitable group has only 15 observations, making the normality test relatively weak as a diagnostic.
+The Shapiro–Wilk test gives a formal statistical assessment, but it does not tell us how the distribution departs from normality. Therefore, the Q-Q plot is used to visually examine the nature and severity of the departure.
+
+
+### Visual Normality Assesment, using Q-Q Plot
+```{r farm-size-qq, fig.cap=" Figure 7: Q-Q Plots of Farm Size by Profitability Status"}
+
+# Visual normality check, using Q-Q plot
+
+ggplot(dat_clean, aes(sample = Farm_Size_Ha)) +
+  stat_qq() +
+  stat_qq_line() +
+  facet_wrap(~ Farm_Profitable) +
+  labs(
+    title = "Q-Q Plots of Farm Size by Profitability Status",
+    x = "Theoretical Quantiles",
+    y = "Sample Quantiles"
+  )
+```
+
+Figure 7 shows substantial deviation from the theoretical normal line, particularly for the profitable farms, with noticeable deviation in the tails. This supports the conclusion that farm size is not adequately normally distributed. Both the parametric and visual assessments of normality clearly questions the normality assumption. The Mann–Whitney U test is therefore selected because the normality assumption is not adequately supported, particularly in the large profitable group.
+
+### Mann–Whitney U Test
+
+```{r farm-size-wilcox}
+
+# Mann-Whitney U test
+
+farm_size_wilcox <- wilcox.test(
+  Farm_Size_Ha ~ Farm_Profitable,
+  data = dat_clean,
+  exact = FALSE
+)
+
+farm_size_wilcox
+```
+**Interpretation:** Because p=.1278>.05, we fail to reject **H₀:**, and conclude that, there is insufficient statistical evidence that the distribution of farm size differs between profitable and unprofitable farms.
+
+
+
+### Rank-Biserial Effect Size
+Effect size was calculated to quantify the magnitude of the observed difference between profitable and unprofitable farms, irrespective of statistical significance.
+
+```{r farm-size-effect}
+n_no <- sum(dat_clean$Farm_Profitable == "No")
+n_yes <- sum(dat_clean$Farm_Profitable == "Yes")
+
+W <- unname(farm_size_wilcox$statistic)
+
+U <- W - (n_no * (n_no + 1)) / 2
+
+rank_biserial <- 1 - (2 * U) / (n_no * n_yes)
+
+rank_biserial
+
+```
+**Interpretation:** The rank-biserial correlation was r=0.237, indicating a small-to-moderate observed difference. However, this estimate should be interpreted cautiously because the groups were highly unbalanced, with only 15 unprofitable farms compared with 1,808 profitable farms.
+
+### Tidy Result
+```{r farm-size-tidy}
+library(broom)
+
+tidy(farm_size_wilcox)
+
+```
+### Conclusion
+A Mann–Whitney U test was conducted to examine whether farm size differed between profitable and unprofitable farms. Normality was not supported, particularly among profitable farms, based on the Shapiro–Wilk test and Q-Q plots; therefore, the non-parametric Mann–Whitney U test was selected. The test indicated no statistically significant difference in farm size between profitable and unprofitable farms, W=10,468, p=.128, with a rank-biserial correlation of r=0.237.
+
+
+
+
+
+
+# Task 5: Regression Analysis
+
+**Pathway Selection:** Binary Logistic Regression, was selected because the primary outcome variable, Farm_Profitable_Binary, is categorical and contains exactly two classes (0 = profitable and 1 = unprofitable). Therefore, binary logistic regression is the appropriate classification method for estimating the probability that a farm belongs to the unprofitable class based on the selected predictor variables.
+
+## Class Balance
+
+```{r}
+class_balance <- dat_clean %>%
+  count(Farm_Profitable) %>%
+  mutate(
+    Percentage = 100 * n / sum(n)
+  )
+
+class_balance
+```
+
+## Visualizing Clas Imbalance
+
+```{r Class Imbalance, fig.cap=" Figure 8: Class Imbalance" }
+ggplot(class_balance,
+       aes(x = Farm_Profitable, y = n)) +
+  geom_col() +
+  geom_text(
+    aes(label = paste0(n, " (", round(Percentage, 1), "%)")),
+    vjust = -0.3
+  ) +
+  labs(
+    title = "Distribution of Farm Profitability",
+    x = "Farm Profitability",
+    y = "Number of Farms"
+  ) +
+  theme_minimal()
+
+```
+
+**Interpretation:** The primary outcome, Farm_Profitable, contains two categories and is therefore suitable for binary logistic regression. The outcome is severely imbalanced, with 1,808 (99.2%) farms classified as profitable and only 15 (0.8%) classified as unprofitable. Because the minority class represents substantially less than 30% of observations, the outcome is considered imbalanced. Consequently, model performance will not be judged using accuracy alone; sensitivity, specificity and discrimination will also be examined.
+
+**Chosen Predictors:** Farm_Size_Ha, Yield_Tonnes_Ha, Input_Cost_GHS, Distance_to_Market_km and Farmer_Sex
+
+
+## Checking Missingness of Predictors
+```{r}
+model_vars <- dat_clean %>%
+  select(
+    Farm_Profitable,
+    Farmer_Age,
+    Farm_Size_Ha,
+    Yield_Tonnes_Ha,
+    Distance_to_Market_km,
+    Farmer_Sex,
+     )
+
+colSums(is.na(model_vars))
+
+```
+Only Distance_to_Market_km contain missing observations. If we use complete-case analysis, the model will therefore lose observations having missing values in either of those two predictors.More importantly, because the No class has only 15 observations, we needed to see whether any of those 15 are lost. 
+
+
+## Checking Missingness by Outcome
+```{r}
+
+model_vars %>%
+  group_by(Farm_Profitable) %>%
+  summarise(
+    n = n(),
+    Missing_Distance = sum(is.na(Distance_to_Market_km)),
+    .groups = "drop"
+  )
+```
+The 15 unprofitable farms have no missing values in either of the two predictors with missing observations. Therefore, the complete-case analysis will not remove any observations from the minority class.
+
+
+## Creating a Complete-Case Modelling Dataset
+```{r}
+
+model_data <- dat_clean %>%
+  select(
+    Farm_Profitable,
+    Farm_Size_Ha,
+    Yield_Tonnes_Ha,
+    Input_Cost_GHS,
+    Distance_to_Market_km,
+    Farmer_Sex
+  ) %>%
+  tidyr::drop_na()
+nrow(model_data)
+```
+
+
+```{r}
+model_data %>%
+  count(Farm_Profitable) %>%
+  mutate(
+    Percentage = 100 * n / sum(n)
+  )
+
+```
+
+Complete-case analysis produced a final modelling dataset of 1,697 farms, representing a reduction of 126 observations from the original 1,823 observations. The final dataset contained 1,682 profitable farms (99.12%) and 15 unprofitable farms (0.88%). Importantly, none of the 15 observations in the minority unprofitable class were removed during complete-case filtering. Thus, the missing-data procedure preserved all available observations for the event of interest, although the resulting modelling dataset remained severely imbalanced.
+
+
+## Fitting the Initial Binary Logistic Regression Model
+
+### Creating a Binary for the Response Variable
+
+```{r}
+model_data <- model_data %>%
+  mutate(
+    Farm_Profitable_Binary = factor(
+      ifelse(Farm_Profitable == "No", 1, 0),
+      levels = c(0, 1)
+    )
+  )
+
+str(model_data$Farm_Profitable_Binary)
+```
+
+```{r}
+
+# Verifying
+
+model_data %>%
+  count(Farm_Profitable_Binary) %>%
+  mutate(
+    Percentage = 100 * n / sum(n)
+  )
+```
+Farm_Profitable was recoded into a binary response variable, Farm_Profitable_Binary, with 1 representing an unprofitable farm (No) and 0 representing a profitable farm (Yes). This treats unprofitability as the event of interest, allowing the resulting odds ratios to be interpreted as changes in the odds that a farm is unprofitable. In the final modelling dataset, 15 farms (0.88%) were classified as unprofitable and 1,682 (99.12%) as profitable.
+
+
+```{r}
+logit_model <- glm(
+  Farm_Profitable_Binary ~
+    Farm_Size_Ha +
+    Yield_Tonnes_Ha +
+    Input_Cost_GHS +
+    Distance_to_Market_km +
+    Farmer_Sex,
+  data = model_data,
+  family = binomial(link = "logit")
+)
+
+summary(logit_model)
+
+```
+A inital binary logistic regression model was fitted to examine factors associated with farm unprofitability. The dependent variable, Farm_Profitable_Binary, was coded as 1 for unprofitable farms (No) and 0 for profitable farms (Yes). Thus, the model estimates the probability and odds of a farm being unprofitable. The predictors included four continuous variables—Farm_Size_Ha, Yield_Tonnes_Ha, Input_Cost_GHS, and Distance_to_Market_km—and one categorical variable, Farmer_Sex, with female farmers serving as the reference category. The model's null deviance was 171.724 on 1,696 degrees of freedom, while the residual deviance decreased to 12.669 on 1,691 degrees of freedom. The model had an AIC of 24.669.
+
+The results indicate that yield was the only predictor statistically significant at the 5% level in the initial model. Its coefficient was negative (β = −32.320, p = 0.045), indicating that higher yield per hectare was associated with lower log-odds of farm unprofitability, holding farm size, input cost, distance to market, and farmer sex constant. In substantive terms, this suggests that farms with greater agricultural productivity may be less likely to be classified as unprofitable.
+
+Farm size was also negatively associated with unprofitability (β = −0.479), but the relationship was not statistically significant (p = 0.779). Input cost had a small positive coefficient (β = 0.000874, p = 0.768), indicating a positive estimated association with the odds of unprofitability, although there was insufficient statistical evidence for such an association. Similarly, distance to market had a negative but non-significant coefficient (β = −0.058, p = 0.551). Male farmers had lower estimated log-odds of unprofitability than female farmers (β = −1.756), but this difference was not statistically significant (p = 0.411).
+
+The substantial reduction in deviance from 171.724 to 12.669 indicates that the fitted predictors substantially improve model fit relative to the intercept-only model. However, this result should be interpreted cautiously because only 15 of the 1,697 farms (0.88%) were unprofitable. The extremely small number of events can produce unstable coefficient estimates and very large standard errors, particularly for predictors such as yield. Therefore, the coefficient estimates should not yet be treated as definitive evidence of association.
+
+
+### Checking for Separation
+```{r}
+
+library(detectseparation)
+
+separation_model <- glm(
+  Farm_Profitable_Binary ~
+    Farm_Size_Ha +
+    Yield_Tonnes_Ha +
+    Input_Cost_GHS +
+    Distance_to_Market_km +
+    Farmer_Sex,
+  data = model_data,
+  family = binomial(link = "logit"),
+  method = "detect_separation"
+)
+
+separation_model
+```
+**Interpretation:** The diagnostic indicates that complete or quasi-complete separation was not detected in the fitted logistic regression model. Furthermore, finite maximum-likelihood estimates exist for the intercept and all five predictors. Therefore, the coefficient estimates are not invalidated by a formal separation problem.
+
+## Odds Ratios and 95% CI
+
+```{r odds ratio, warning=FALSE, message=FALSE, tab.cap="Table 2: Odds-Ratio Table"}
+
+logit_table <- suppressWarnings(
+  logit_model %>%
+    tbl_regression(
+      exponentiate = TRUE,
+      conf.level = 0.95,
+      label = list(
+        Farm_Size_Ha ~ "Farm Size (ha)",
+        Yield_Tonnes_Ha ~ "Yield (tonnes/ha)",
+        Input_Cost_GHS ~ "Input Cost (GHS)",
+        Distance_to_Market_km ~ "Distance to Market (km)",
+        Farmer_Sex ~ "Farmer Sex"
+      )
+    )
+)
+
+logit_table
+
+```
+**Interpretation:** The results indicate that yield was the only predictor statistically significant at the 5% level in the initial logistic regression model. The odds ratio for yield was substantially below 1, indicating an inverse association between yield and the odds of a farm being unprofitable. Specifically, a one-unit increase in yield (tonnes/ha) was associated with a reduction in the estimated odds of unprofitability, holding the other predictors constant (p = .045). However, the extremely small OR and very wide confidence interval should be interpreted cautiously because only 15 farms were classified as unprofitable.
+
+Farm size had an OR of 0.62, suggesting lower estimated odds of unprofitability for each additional hectare, but the association was not statistically significant (p = .800). Similarly, input cost had an OR approximately equal to 1.00 (p = .800), indicating little evidence of an association with the odds of unprofitability in this model. Distance to market had an OR of 0.94 (p = .600), while male farmers had approximately 0.17 times the estimated odds of unprofitability compared with female farmers (p = .400). Neither association was statistically significant.
+
+
+
+
+```{r odds ratios, warning=FALSE, fig.cap=" Figure 9: Odds Ratios Forest Plot"}
+
+
+forest_data <- tidy(
+  logit_model,
+  exponentiate = TRUE,
+  conf.int = TRUE
+) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    Predictor = case_when(
+      term == "Farm_Size_Ha" ~ "Farm Size (ha)",
+      term == "Yield_Tonnes_Ha" ~ "Yield (tonnes/ha)",
+      term == "Input_Cost_GHS" ~ "Input Cost (GHS)",
+      term == "Distance_to_Market_km" ~ "Distance to Market (km)",
+      term == "Farmer_SexMale" ~ "Farmer Sex: Male vs Female",
+      TRUE ~ term
+    ),
+    Significance = ifelse(
+      p.value < 0.05,
+      "Significant (p < 0.05)",
+      "Not significant (p ≥ 0.05)"
+    )
+  )
+
+ggplot(
+  forest_data,
+  aes(
+    x = estimate,
+    y = reorder(Predictor, estimate),
+    xmin = conf.low,
+    xmax = conf.high,
+    colour = Significance
+  )
+) +
+  geom_vline(
+    xintercept = 1,
+    linetype = "dashed"
+  ) +
+  geom_errorbar(
+    width = 0.15
+  ) +
+  geom_point(
+    size = 3
+  ) +
+  scale_x_log10() +
+  scale_colour_manual(
+    values = c(
+      "Significant (p < 0.05)" = "red",
+      "Not significant (p ≥ 0.05)" = "black"
+    )
+  ) +
+  labs(
+    title = "Odds Ratios for Farm Unprofitability",
+    subtitle = "Reference line at OR = 1",
+    x = "Odds Ratio (log scale)",
+    y = NULL,
+    colour = "Significance"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "right"
+  )
+
+```
+
+Figure 9 shows the odds ratios from the initial logistic regression model for farm unprofitability. Yield (tonnes/ha) was the only statistically significant predictor (\(p=0.045\)), with an extremely small odds ratio, indicating that higher yield was associated with substantially lower odds of farm unprofitability, holding other predictors constant. Farm size, input cost, distance to market, and farmer sex were not statistically significant (\(p>0.05\)). Although the point estimates for farm size and male farmer sex were below one, their wide confidence intervals indicate substantial uncertainty around these estimates. The extreme odds ratio estimated for yield should also be interpreted cautiously because the modelling data contained only 15 unprofitable farms. Overall, the forest plot suggests that yield provides the strongest evidence of an association with farm profitability among the predictors considered, while the remaining predictors do not provide sufficient statistical evidence of an association with farm unprofitability in the initial model.
+
+
+## Train–Test Split and Classification Performance
+
+### Stratified 70/30 Split
+
+**Train–Test Split and Classification Performance:** A stratified 70/30 train–test split was used to evaluate the predictive performance of the binary logistic regression model. Stratification was applied using Farm_Profitable_Binary to preserve the highly unequal distribution of profitable and unprofitable farms in both subsets. The logistic regression model was fitted exclusively on the training data, and predicted probabilities and classifications were subsequently generated for the held-out test data. Classification performance was evaluated using a confusion matrix, overall accuracy, sensitivity, and specificity. Because unprofitability represents only 0.88% of the modelling observations, accuracy alone may provide a misleading assessment of model performance; consequently, particular attention was given to sensitivity, which measures the model's ability to correctly identify unprofitable farms.
+
+```{r}
+
+set.seed(123)
+
+data_split <- initial_split(
+  model_data,
+  prop = 0.70,
+  strata = Farm_Profitable_Binary
+)
+
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+set.seed(123)
+
+cv_folds <- vfold_cv(
+  train_data,
+  v = 10,
+  strata = Farm_Profitable_Binary
+)
+
+
+```
+
+
+
+
+
+```{r}
+test_data %>%
+  count(Farm_Profitable_Binary) %>%
+  mutate(
+    Percentage = 100 * n / sum(n)
+  )
+
+```
+```{r}
+# Convert binary outcome to factor for tidymodels classification
+train_data <- train_data %>%
+  mutate(
+    Farm_Profitable_Binary = factor(
+      Farm_Profitable_Binary,
+      levels = c(0, 1)
+    )
+  )
+
+test_data <- test_data %>%
+  mutate(
+    Farm_Profitable_Binary = factor(
+      Farm_Profitable_Binary,
+      levels = c(0, 1)
+    )
+  )
+
+```
+
+
+
+```{r}
+class(train_data$Farm_Profitable_Binary)
+levels(train_data$Farm_Profitable_Binary)
+
+class(test_data$Farm_Profitable_Binary)
+levels(test_data$Farm_Profitable_Binary)
+
+```
+```{r}
+
+set.seed(123)
+
+cv_folds <- vfold_cv(
+  train_data,
+  v = 10,
+  strata = Farm_Profitable_Binary
+)
+
+```
+
+
+### Fitting the Logistic Regression on the Training Data
+```{r}
+logit_train <- glm(
+  Farm_Profitable_Binary ~
+    Farm_Size_Ha +
+    Yield_Tonnes_Ha +
+    Input_Cost_GHS +
+    Distance_to_Market_km +
+    Farmer_Sex,
+  data = train_data,
+  family = binomial(link = "logit")
+)
+
+summary(logit_train)
+
+```
+
+
+
+### Generating Predictions on Test Set
+
+```{r}
+test_results <- test_data %>%
+  mutate(
+    predicted_probability = predict(
+      logit_train,
+      newdata = test_data,
+      type = "response"
+    ),
+    predicted_class = ifelse(
+      predicted_probability >= 0.50,
+      1,
+      0
+    )
+  )
+
+```
+
+### Checking the Predictions
+```{r}
+test_results %>%
+  select(
+    Farm_Profitable_Binary,
+    predicted_probability,
+    predicted_class
+  ) %>%
+  head(10)
+
+```
+
+
+### Confusion Matrix
+```{r}
+library(yardstick)
+
+test_results <- test_results %>%
+  mutate(
+    actual = factor(
+      Farm_Profitable_Binary,
+      levels = c(0, 1)
+    ),
+    predicted = factor(
+      predicted_class,
+      levels = c(0, 1)
+    )
+  )
+
+conf_mat(
+  test_results,
+  truth = actual,
+  estimate = predicted
+)
+
+```
+
+
+
+### Accuracy, Sensitivity and Specificity
+
+
+```{r}
+classification_metrics <- metric_set(
+  accuracy,
+  sens,
+  spec
+)
+
+classification_metrics(
+  test_results,
+  truth = actual,
+  estimate = predicted,
+  event_level = "second"
+)
+
+```
+
+
+
+### AUC
+```{r}
+
+library(yardstick)
+
+roc_auc(
+  test_results,
+  truth = actual,
+  predicted_probability,
+  event_level = "second"
+)
+
+```
+
+
+### Threshold Analysis
+
+```{r}
+
+thresholds <- c(0.50, 0.20, 0.10, 0.05, 0.01)
+
+threshold_results <- purrr::map_dfr(
+  thresholds,
+  function(threshold) {
+    
+    pred <- factor(
+      ifelse(
+        test_results$predicted_probability >= threshold,
+        1,
+        0
+      ),
+      levels = c(0, 1)
+    )
+    
+    metrics <- tibble(
+      truth = test_results$actual,
+      estimate = pred
+    ) %>%
+      metric_set(accuracy, sens, spec)(
+        truth = truth,
+        estimate = estimate,
+        event_level = "second"
+      )
+    
+    metrics %>%
+      select(.metric, .estimate) %>%
+      pivot_wider(
+        names_from = .metric,
+        values_from = .estimate
+      ) %>%
+      mutate(
+        Threshold = threshold,
+        .before = 1
+      )
+  }
+)
+
+threshold_results
+
+```
+
+
+
+
+### Interpretation of Classification Performance and Odds Ratios
+
+The logistic regression model demonstrated excellent overall discriminatory ability, with an ROC-AUC of **0.998**, indicating that the model was highly effective at distinguishing profitable from unprofitable farms across different classification thresholds. However, this result should be interpreted cautiously because the modelling data were severely imbalanced, with only **15 unprofitable farms (0.88%)** among 1,697 observations. The odds ratio results showed that **Farm Size** had an OR of **0.62**, suggesting that a one-unit increase in farm size was associated with lower estimated odds of unprofitability, although the association was not statistically significant (*p* = 0.80). **Yield** had an OR substantially below 1 (approximately **0.00**), indicating a strong negative association with unprofitability; yield was the only statistically significant predictor (*p* = 0.045). **Input Cost** had an OR of approximately **1.00**, indicating little estimated change in the odds of unprofitability for a one-unit increase in input cost, while **Distance to Market** had an OR of **0.94**, suggesting slightly lower estimated odds of unprofitability, although this effect was not statistically significant.
+
+Threshold analysis showed that the conventional **0.50 threshold** produced **99.61% accuracy, 0% sensitivity, and 99.80% specificity**. Lowering the threshold to **0.10 or 0.05** increased sensitivity to **100%** while maintaining approximately 99.80% specificity. At **0.01**, sensitivity remained 100% but specificity decreased to 99.61%. This illustrates the sensitivity-specificity trade-off: lower thresholds improve detection of unprofitable farms but may increase false positives. Nevertheless, the sensitivity estimates are unstable because only one unprofitable farm occurred in the test set.
+
+
+
+
+
+
+
+
+
+# Task 6: Predictive Analytics
+
+
+##  Choice and Justification
+
+**Choice of Approach:** Option A, Supervised Machine Learning, was selected because the primary outcome variable, `Farm_Profitable_Binary`, is a binary categorical variable representing whether a farm is profitable (0) or unprofitable (1). The objective of the predictive analysis is to develop models capable of learning patterns in the farm characteristics and predicting the profitability status of previously unseen farms. Supervised classification is therefore appropriate because the outcome class is known for the observations used to train the models. Decision Tree and Random Forest classifiers were selected as the two required predictive models. Decision Trees provide an interpretable rule-based approach for identifying combinations of farm characteristics associated with profitability, while Random Forest extends this approach by combining multiple decision trees to improve predictive stability and capture potentially complex, nonlinear relationships. The analysis will use a full `tidymodels` workflow, including appropriate preprocessing, stratified cross-validation, hyperparameter tuning, and evaluation on a held-out test set. Because the outcome is highly imbalanced, with the unprofitable class representing less than 30% of observations, the potential use of SMOTE will also be considered within the training workflow to improve the models' ability to learn the minority class. Model performance will be assessed using accuracy, ROC-AUC, sensitivity, and specificity.
+
+
+
+
+
+## Class Imbalance and SMOTE Justification
+
+For Task 6, the target variable is `Farm_Profitable_Binary`, which represents farm profitability as a binary outcome. The variable is coded as 0 for profitable farms and 1 for unprofitable farms, with unprofitability treated as the minority class of interest. The modelling data contain 1,682 profitable farms (99.12%) and 15 unprofitable farms (0.88%). Therefore, the outcome is highly imbalanced, since the minority class represents substantially less than the 30% threshold specified in the assignment.
+
+Because the objective of the predictive analysis is to identify farms that are at risk of being unprofitable, relying solely on the original class distribution could cause the machine-learning models to favour the dominant profitable class. Consequently, SMOTE (Synthetic Minority Over-sampling Technique) will be applied within the training and resampling workflow to address the class imbalance. SMOTE will be applied only to the training data through the resampling workflow, thereby preventing information from the test set from influencing model training. Model performance will subsequently be evaluated on the original, untouched test-set distribution using accuracy, ROC-AUC, sensitivity, and specificity.
+
+
+
+
+### Check class balance
+```{r}
+model_data %>%
+  count(Farm_Profitable_Binary) %>%
+  mutate(
+    Percentage = 100 * n / sum(n)
+  )
+
+```
+
+### Stratified 70/30 Train-Test Split
+
+A 70/30 stratified train–test split was used to separate the modelling data into training and testing subsets while preserving the distribution of Farm_Profitable_Binary. Stratification is particularly important because the outcome is highly imbalanced, with unprofitable farms representing only 0.88% of the observations. The training set is used for model development, preprocessing, SMOTE, cross-validation, and hyperparameter tuning, while the test set is retained as unseen data for final performance evaluation. The binary outcome is defined as a factor before the split so that it is compatible with the tidymodels classification workflow and the themis::step_smote() preprocessing step.
+
+```{r}
+# Convert the binary outcome to a factor
+model_data <- model_data %>%
+  mutate(
+    Farm_Profitable_Binary = factor(
+      Farm_Profitable_Binary,
+      levels = c(0, 1)
+    )
+  )
+
+# Stratified 70/30 train-test split
+set.seed(123)
+
+data_split <- initial_split(
+  model_data,
+  prop = 0.70,
+  strata = Farm_Profitable_Binary
+)
+
+train_data <- training(data_split)
+test_data  <- testing(data_split)
+
+# Check class distribution in training data
+train_data %>%
+  count(Farm_Profitable_Binary) %>%
+  mutate(
+    Percentage = 100 * n / sum(n)
+  )
+
+
+```
+
+```{r}
+# Check class distribution in test data
+test_data %>%
+  count(Farm_Profitable_Binary) %>%
+  mutate(
+    Percentage = 100 * n / sum(n)
+  )
+
+```
+
+```{r}
+
+```
+
+### Ten-Fold Stratified Cross-Validation
+
+```{r}
+
+# 10-fold stratified cross-validation
+set.seed(123)
+
+cv_folds <- vfold_cv(
+  train_data,
+  v = 10,
+  strata = Farm_Profitable_Binary
+)
+
+cv_folds
+
+```
+### Decision Tree Workflow and Preprocessing
+
+
+```{r}
+
+# Decision tree model specification
+tree_model <- decision_tree(
+  cost_complexity = tune(),
+  tree_depth = tune(),
+  min_n = tune()
+) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+# Preprocessing recipe
+tree_recipe <- recipe(
+  Farm_Profitable_Binary ~
+    Farm_Size_Ha +
+    Yield_Tonnes_Ha +
+    Input_Cost_GHS +
+    Distance_to_Market_km +
+    Farmer_Sex,
+  data = train_data
+) %>%
+  step_impute_median(
+    all_numeric_predictors()
+  ) %>%
+  step_impute_mode(
+    all_nominal_predictors()
+  ) %>%
+  step_dummy(
+    all_nominal_predictors()
+  ) %>%
+  step_smote(
+    Farm_Profitable_Binary
+  )
+
+# Combine recipe and model into a workflow
+tree_workflow <- workflow() %>%
+  add_recipe(tree_recipe) %>%
+  add_model(tree_model)
+
+tree_workflow
+
+```
+
+
+
+### Decision Tree Hyperparameter Tuning
+
+```{r, warning=FALSE, message=FALSE}
+
+
+# Define the tuning grid
+set.seed(123)
+
+tree_grid <- grid_regular(
+  cost_complexity(),
+  tree_depth(range = c(2L, 10L)),
+  min_n(range = c(2L, 20L)),
+  levels = 3
+)
+
+tree_grid
+
+
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+
+
+set.seed(123)
+
+tree_tuned <- tune_grid(
+  tree_workflow,
+  resamples = cv_folds,
+  grid = tree_grid,
+  metrics = metric_set(
+    accuracy,
+    roc_auc,
+    sens,
+    spec
+  ),
+  control = control_grid(
+    save_pred = TRUE
+  )
+)
+
+```
+
+
+```{r}
+collect_metrics(tree_tuned)
+
+```
+
+
+### Select the best tree
+
+```{r}
+
+best_tree <- select_best(
+  tree_tuned,
+  metric = "roc_auc"
+)
+
+best_tree
+
+
+```
+
+### Fitting the Model on the Training Data
+
+```{r, warning=FALSE}
+final_tree_workflow <- finalize_workflow(
+  tree_workflow,
+  best_tree
+)
+
+final_tree_fit <- fit(
+  final_tree_workflow,
+  data = train_data
+)
+
+```
+
+
+### Generating Test-Set Predictions
+
+```{r}
+
+tree_test_predictions <- predict(
+  final_tree_fit,
+  new_data = test_data,
+  type = "prob"
+) %>%
+  bind_cols(
+    predict(
+      final_tree_fit,
+      new_data = test_data,
+      type = "class"
+    )
+  ) %>%
+  bind_cols(
+    test_data %>%
+      select(Farm_Profitable_Binary)
+  )
+
+```
+### Checking the Predicions
+
+```{r}
+
+tree_test_predictions %>%
+  head()
+
+```
+
+
+### Test-Set Performance
+```{r}
+
+tree_test_metrics <- metric_set(
+  accuracy,
+  roc_auc,
+  sens,
+  spec
+)(
+  tree_test_predictions,
+  truth = Farm_Profitable_Binary,
+  estimate = .pred_class,
+  .pred_1,
+  event_level = "second"
+)
+
+tree_test_metrics
+
+
+
+```
+
+
+
+### Confusion Matrix
+
+```{r}
+
+
+conf_mat(
+  tree_test_predictions,
+  truth = Farm_Profitable_Binary,
+  estimate = .pred_class
+)
+
+
+```
+
+
+
+## Random Forest Workflow and Preprocessing
+
+A Random Forest classifier is fitted as the second supervised machine-learning method. The model was implemented using a tidymodels workflow to ensure that preprocessing and model fitting were performed consistently within the resampling framework. Missing numeric values were imputed using the median, while missing categorical values were imputed using the mode. Categorical predictors were converted into dummy variables. Unlike the Decision Tree, normalization was included in the Random Forest preprocessing workflow as specified in the project requirements. Because Farm_Profitable_Binary is severely imbalanced, SMOTE was also incorporated into the training workflow to increase representation of the minority class. Importantly, SMOTE was performed within the resampling workflow so that synthetic observations were generated only from the training portions of the data and did not affect the independent test set.
+```{r}
+
+set.seed(123)
+
+# Random Forest recipe
+rf_recipe <- recipe(
+  Farm_Profitable_Binary ~
+    Farm_Size_Ha +
+    Yield_Tonnes_Ha +
+    Input_Cost_GHS +
+    Distance_to_Market_km +
+    Farmer_Sex,
+  data = train_data
+) %>%
+  
+  # Impute numeric predictors
+  step_impute_median(
+    all_numeric_predictors()
+  ) %>%
+  
+  # Impute categorical predictors
+  step_impute_mode(
+    all_nominal_predictors()
+  ) %>%
+  
+  # Convert categorical variables to dummy variables
+  step_dummy(
+    all_nominal_predictors()
+  ) %>%
+  
+  # Normalize predictors for Random Forest
+  step_normalize(
+    all_numeric_predictors()
+  ) %>%
+  
+  # Address severe class imbalance
+  step_smote(
+    Farm_Profitable_Binary
+  )
+
+# Random Forest model specification
+rf_model <- rand_forest(
+  mtry = tune(),
+  trees = tune(),
+  min_n = tune()
+) %>%
+  set_engine(
+    "ranger",
+    importance = "impurity"
+  ) %>%
+  set_mode("classification")
+
+# Random Forest workflow
+rf_workflow <- workflow() %>%
+  add_recipe(rf_recipe) %>%
+  add_model(rf_model)
+
+rf_workflow
+
+```
+### Random Forest Hyperparameter Tuning
+
+The Random Forest model was tuned using the 10-fold stratified cross-validation procedure established for the predictive analysis. Three hyperparameters were tuned: `mtry`, which controls the number of predictors randomly considered at each tree split; `trees`, which determines the number of trees grown in the forest; and `min_n`, which specifies the minimum number of observations required to split a node. A grid of candidate parameter combinations was evaluated using accuracy, ROC-AUC, sensitivity, and specificity. ROC-AUC was used as the principal metric for selecting the best configuration because the target variable is severely imbalanced and accuracy alone may favour the majority class.
+
+
+```{r}
+
+set.seed(123)
+
+# Define tuning grid
+rf_grid <- grid_regular(
+  mtry(
+    range = c(1L, 5L)
+  ),
+  trees(
+    range = c(100L, 500L)
+  ),
+  min_n(
+    range = c(2L, 20L)
+  ),
+  levels = 3
+)
+
+# Tune Random Forest
+rf_tuned <- tune_grid(
+  rf_workflow,
+  resamples = cv_folds,
+  grid = rf_grid,
+  metrics = metric_set(
+    accuracy,
+    roc_auc,
+    sens,
+    spec
+  ),
+  control = control_grid(
+    save_pred = TRUE
+  )
+)
+
+# Display tuning results
+rf_tuned
+
+```
+
+
+```{r}
+
+# 10-fold cross-validation
+
+set.seed(123)
+
+rf_tuned <- tune_grid(
+  rf_workflow,
+  resamples = cv_folds,
+  grid = rf_grid,
+  metrics = metric_set(
+    accuracy,
+    roc_auc,
+    sens,
+    spec
+  ),
+  control = control_grid(
+    save_pred = TRUE
+  )
+)
+
+```
+
+
+
+
+
+
+```{r}
+collect_metrics(rf_tuned)
+```
+
+### Selecting the Best Random Forest configuration using ROC-AUC
+
+```{r}
+best_rf <- select_best(
+  rf_tuned,
+  metric = "roc_auc"
+)
+
+best_rf
+
+```
+
+### Random Forest and Test-Set Performance
+
+```{r}
+
+
+# Finalize the Random Forest workflow
+final_rf_workflow <- finalize_workflow(
+  rf_workflow,
+  best_rf
+)
+
+# Fit the final model on the training data
+final_rf_fit <- fit(
+  final_rf_workflow,
+  data = train_data
+)
+
+# Generate predictions on the untouched test set
+rf_test_predictions <- predict(
+  final_rf_fit,
+  new_data = test_data,
+  type = "prob"
+) %>%
+  bind_cols(
+    predict(
+      final_rf_fit,
+      new_data = test_data,
+      type = "class"
+    )
+  ) %>%
+  bind_cols(
+    test_data %>%
+      select(Farm_Profitable_Binary)
+  )
+
+rf_test_predictions
+```
+
+
+
+
+### Test-Set Metrics
+```{r}
+
+rf_test_metrics <- metric_set(
+  accuracy,
+  roc_auc,
+  sens,
+  spec
+)(
+  rf_test_predictions,
+  truth = Farm_Profitable_Binary,
+  estimate = .pred_class,
+  .pred_1,
+  event_level = "second"
+)
+
+rf_test_metrics
+```
+### Confusion Matrix
+
+```{r}
+conf_mat(
+  rf_test_predictions,
+  truth = Farm_Profitable_Binary,
+  estimate = .pred_class
+)
+
+```
+```{r}
+rf_test_metrics %>%
+  select(.metric, .estimate)
+```
+
+### Model Comparison
+```{r}
+
+# Decision Tree test metrics
+tree_comparison <- tree_test_metrics %>%
+  select(.metric, .estimate) %>%
+  mutate(Model = "Decision Tree") %>%
+  pivot_wider(
+    names_from = .metric,
+    values_from = .estimate
+  )
+
+# Random Forest test metrics
+rf_comparison <- rf_test_metrics %>%
+  select(.metric, .estimate) %>%
+  mutate(Model = "Random Forest") %>%
+  pivot_wider(
+    names_from = .metric,
+    values_from = .estimate
+  )
+
+# Combine models
+model_comparison <- bind_rows(
+  tree_comparison,
+  rf_comparison
+) %>%
+  select(
+    Model,
+    accuracy,
+    roc_auc,
+    sens,
+    spec
+  ) %>%
+  rename(
+    Accuracy = accuracy,
+    `ROC-AUC` = roc_auc,
+    Sensitivity = sens,
+    Specificity = spec
+  )
+
+# Create flextable
+model_comparison %>%
+  mutate(
+    across(
+      Accuracy:Specificity,
+      ~ round(.x, 3)
+    )
+  ) %>%
+  flextable() %>%
+  set_caption(
+    "Comparison of Decision Tree and Random Forest Test-Set Performance"
+  ) %>%
+  autofit()
+```
+
+
+
+### Variable Importance Plot
+
+### 8.11 Random Forest Variable Importance
+
+Variable importance was examined for the final Random Forest model to identify the predictors that contributed most strongly to its classification decisions. The `vip()` function was used to visualise the relative importance of the predictors in the fitted Random Forest. Higher importance values indicate predictors that contributed more substantially to the model's predictive performance. The plot is used to support interpretation of the model and to identify the farm characteristics that are most influential in distinguishing profitable from unprofitable farms.
+
+```{r}
+
+importance_values <- final_rf_fit %>%
+  extract_fit_parsnip() %>%
+  vip::vi() %>%
+  arrange(desc(Importance)) %>%
+  slice_head(n = 5)
+
+ggplot(
+  importance_values,
+  aes(
+    x = Importance,
+    y = reorder(Variable, Importance)
+  )
+) +
+  geom_col() +
+  geom_text(
+    aes(label = round(Importance, 3)),
+    hjust = -0.1
+  ) +
+  labs(
+    title = "Random Forest Variable Importance",
+    x = "Importance",
+    y = "Variable"
+  ) +
+  coord_cartesian(
+    xlim = c(0, max(importance_values$Importance) * 1.15)
+  )
+
+```
+
+
+**Interpretation:** Yield_Tonnes_Ha is overwhelmingly the most important predictor in the Random Forest, with an importance value of 1027.290, substantially exceeding the other predictors. This indicates that yield contributes most strongly to the Random Forest's ability to distinguish between profitable and unprofitable farms. Input_Cost_GHS is the second most important variable (70.072), followed by Farm_Size_Ha (43.742) and Distance_to_Market_km (27.825). Farmer_Sex_Male has the lowest importance (3.467), suggesting that it contributes relatively little to the model's predictive decisions compared with the farm-level economic and production variables.
+
+
+
+### Discussion and Model Recommendation
+
+The Decision Tree and Random Forest models demonstrated identical performance on the held-out test set, with both achieving 100% accuracy, 100% ROC-AUC, 100% sensitivity, and 100% specificity. Thus, based strictly on the test-set metrics, neither model demonstrated a predictive advantage over the other. Both models were able to correctly distinguish profitable from unprofitable farms in the test data. However, the results should be interpreted cautiously because the outcome variable is highly imbalanced, with unprofitable farms representing only a very small proportion of the observations. Consequently, perfect test-set performance may not necessarily translate into equivalent performance on new data.
+
+Despite the identical predictive metrics, the Random Forest is recommended as the preferred model because it combines multiple decision trees and can capture more complex and nonlinear relationships among the predictors while generally providing greater model stability than a single tree. Its variable-importance analysis also identified Yield_Tonnes_Ha as the dominant predictor, followed by Input_Cost_GHS, Farm_Size_Ha, Distance_to_Market_km, and Farmer_Sex_Male. This provides useful insight into the factors contributing to classification. Therefore, although both models performed equally well on the present test set, the Random Forest is preferred for predictive application because of its ensemble structure and greater potential robustness to variation in the underlying data.
+
