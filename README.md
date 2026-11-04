@@ -85,7 +85,7 @@ R, with the tidyverse (readr, dplyr, tidyr, stringr, ggplot2), tidymodels (resam
 
 ## Author
 
-**Opoku Asante Emmanuel**, Data Scientist and Financial Economist
+**Yaw Asante** - Data Scientist, Statistician and Financial Economist
 
 Email: vkpoasante@gmail.com
 
