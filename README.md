@@ -1,4 +1,4 @@
-[README_GAHS.md](https://github.com/user-attachments/files/34252419/README_GAHS.md)
+
 # Farm Profitability Analysis in R: From Messy Joins to Predictive Models
 
 An end-to-end analysis of a farm-level and a market-level survey dataset (GAHS, 2,000 farms and 120 markets), written in R. It covers importing and joining, a missing-value audit, wrangling, visualisation (including a regional map), hypothesis testing, logistic regression, and decision tree and random forest classifiers.
